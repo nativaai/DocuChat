@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DocuChat — Zero-Server Private Document Q&A</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <style>
+    /* Mobile full-height normalization */
+    .chat-height { height: calc(100vh - 4.5rem); }
+    /* Scrollbar Styling */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 flex flex-col min-h-screen font-sans antialiased">
+
+  <header class="h-16 bg-white border-b border-slate-200 px-4 md:px-6 flex items-center justify-between z-10 sticky top-0">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-sm">
+        <i data-lucide="file-text" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h1 class="font-bold tracking-tight text-slate-900 leading-none">DocuChat</h1>
+        <span class="text-xs text-slate-400 font-medium">100% Client-Side Engine</span>
+      </div>
+      <span id="licenseBadge" class="ml-2 text-xs px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600 border border-slate-200">Free Tier</span>
+    </div>
+    
+    <div class="flex items-center gap-2">
+      <button id="upgradeBtn" onclick="openModal('upgradeModal')" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors border border-indigo-200">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+        <span>Upgrade to Pro</span>
+      </button>
+      <button onclick="openModal('settingsModal')" class="p-2 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors" title="Settings">
+        <i data-lucide="settings" class="w-5 h-5"></i>
+      </button>
+    </div>
+  </header>
+
+  <div class="flex-1 flex flex-col md:flex-row overflow-hidden">
+    
+    <aside class="w-full md:w-80 border-b md:border-b-0 md:border-r border-slate-200 bg-white p-4 flex flex-col gap-4">
+      <div id="dropZone" class="border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50 hover:bg-indigo-50/40 rounded-xl p-4 text-center cursor-pointer transition-colors flex flex-col items-center justify-center gap-2">
+        <input type="file" id="fileInput" accept="application/pdf" multiple class="hidden">
+        <div class="p-2 bg-indigo-100 text-indigo-600 rounded-full">
+          <i data-lucide="upload-cloud" class="w-5 h-5"></i>
+        </div>
+        <p class="text-xs font-semibold text-slate-700">Drop PDF here or click to browse</p>
+        <span class="text-[10px] text-slate-400">Pure browser extraction • Zero upload</span>
+      </div>
+
+      <div id="parseStatus" class="hidden text-xs flex items-center gap-2 text-indigo-600 bg-indigo-50 p-2.5 rounded-lg">
+        <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+        <span id="parseStatusText">Extracting PDF text...</span>
+      </div>
+
+      <div class="flex items-center justify-between text-xs px-1 text-slate-600">
+        <label for="scopeSelect" class="font-medium">Active Search Scope:</label>
+        <select id="scopeSelect" onchange="handleScopeChange()" class="border border-slate-200 rounded px-2 py-1 bg-slate-50 text-slate-700 text-xs focus:ring-1 focus:ring-indigo-500 outline-none">
+          <option value="all">All Documents (Pro)</option>
+        </select>
+      </div>
+
+      <div class="flex-1 overflow-y-auto flex flex-col gap-2" id="docListContainer">
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col bg-slate-100/60 overflow-hidden relative">
+      
+      <div class="h-10 border-b border-slate-200/80 bg-white/70 backdrop-blur-sm px-4 flex items-center justify-between text-xs text-slate-500">
+        <span id="activeDocInfo">Select or upload a PDF to begin</span>
+        <div class="flex items-center gap-2">
+          <button onclick="exportChatMarkdown()" class="hover:text-indigo-600 flex items-center gap-1">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i> Export
+          </button>
+        </div>
+      </div>
+
+      <div id="chatHistory" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+        <div class="max-w-md mx-auto my-12 text-center text-slate-400 space-y-2">
+          <div class="w-12 h-12 bg-white rounded-2xl border border-slate-200 mx-auto flex items-center justify-center text-slate-300 shadow-sm">
+            <i data-lucide="message-square-dashed" class="w-6 h-6"></i>
+          </div>
+          <p class="text-sm font-medium text-slate-600">Private, In-Browser Chat</p>
+          <p class="text-xs">Add your PDF, configure your Gemini API Key in settings, and interrogate your documents without leaking data.</p>
+        </div>
+      </div>
+
+      <div class="p-3 md:p-4 bg-white border-t border-slate-200">
+        <form id="chatForm" onsubmit="handleChatSubmit(event)" class="flex gap-2 max-w-4xl mx-auto items-center">
+          <input 
+            type="text" 
+            id="queryInput" 
+            placeholder="Ask anything about the document..." 
+            class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all shadow-inner"
+            required
+          >
+          <button 
+            type="submit" 
+            id="sendBtn"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium p-2.5 rounded-xl transition shadow-sm flex items-center justify-center disabled:opacity-50"
+          >
+            <i data-lucide="arrow-up" class="w-4 h-4"></i>
+          </button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <div id="settingsModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-slate-100">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-slate-800">Settings & Security</h3>
+        <button onclick="closeModal('settingsModal')" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-slate-700">Google Gemini API Key</label>
+          <input type="password" id="geminiKeyInput" placeholder="AIzaSy..." class="w-full mt-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+          <p class="text-[11px] text-emerald-600 font-medium mt-1 flex items-center gap-1">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+            Stored solely in your browser's localStorage.
+          </p>
+        </div>
+
+        <div>
+          <label class="text-xs font-semibold text-slate-700">Pro License Key</label>
+          <input type="text" id="licenseKeyInput" placeholder="DOCU-PRO-XXXX" class="w-full mt-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-mono">
+        </div>
+      </div>
+
+      <div class="bg-slate-50 p-3 rounded-lg border border-slate-200/80 text-[11px] text-slate-500 space-y-1">
+        <p><strong>Note:</strong> PDF text extraction, chunking, and API orchestration happen purely on your device. Calls route directly to <code>generativelanguage.googleapis.com</code>.</p>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeModal('settingsModal')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+        <button onclick="saveSettings()" class="px-4 py-2 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm">Save Preferences</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="upgradeModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-5 border border-slate-100">
+      <div class="flex justify-between items-center">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center">
+            <i data-lucide="zap" class="w-4 h-4"></i>
+          </div>
+          <h3 class="font-bold text-slate-800">DocuChat Pro</h3>
+        </div>
+        <button onclick="closeModal('upgradeModal')" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      
+      <div class="space-y-3">
+        <div class="flex items-start gap-3 text-xs text-slate-600">
+          <i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>
+          <span><strong>Multi-Document Mode:</strong> Compare and search through unlimited PDF documents concurrently.</span>
+        </div>
+        <div class="flex items-start gap-3 text-xs text-slate-600">
+          <i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>
+          <span><strong>Audio Flashcards:</strong> Synthesize instant audio breakdowns using high-clarity on-device TTS.</span>
+        </div>
+        <div class="flex items-start gap-3 text-xs text-slate-600">
+          <i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>
+          <span><strong>Markdown & Notion Export:</strong> Save research sessions with full citations and query breakdowns.</span>
+        </div>
+      </div>
+
+      <div class="pt-2 flex flex-col gap-2">
+        <a href="https://gumroad.com" target="_blank" class="w-full text-center py-2.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-sm transition">
+          Purchase License ($12 lifetime)
+        </a>
+        <button onclick="closeModal('upgradeModal'); openModal('settingsModal');" class="text-center py-2 text-xs font-medium text-slate-500 hover:text-slate-800">
+          Already have a key? Activate in Settings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Initialize PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // State Management
+    const state = {
+      documents: [], // [{ id, name, pages, chunks: [{ text, page }] }]
+      selectedDocId: null, // null means "all"
+      chatHistory: [],
+      apiKey: localStorage.getItem('docuchat_api_key') || '',
+      isPro: (localStorage.getItem('docuchat_pro_key') || '').startsWith('PRO-'),
+      model: 'gemini-1.5-flash'
+    };
+
+    // UI Initialization
+    document.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      updateLicenseUI();
+      loadStoredSettings();
+      setupDropZone();
+    });
+
+    function updateLicenseUI() {
+      const badge = document.getElementById('licenseBadge');
+      const upgradeBtn = document.getElementById('upgradeBtn');
+      if (state.isPro) {
+        badge.textContent = 'Pro Unlocked';
+        badge.className = 'ml-2 text-xs px-2 py-0.5 rounded-full font-semibold bg-indigo-50 text-indigo-600 border border-indigo-200';
+        upgradeBtn.classList.add('hidden');
+      } else {
+        badge.textContent = 'Free Tier';
+        badge.className = 'ml-2 text-xs px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-600 border border-slate-200';
+        upgradeBtn.classList.remove('hidden');
+      }
+      updateScopeDropdown();
+    }
+
+    function loadStoredSettings() {
+      document.getElementById('geminiKeyInput').value = state.apiKey;
+      document.getElementById('licenseKeyInput').value = localStorage.getItem('docuchat_pro_key') || '';
+    }
+
+    function saveSettings() {
+      const key = document.getElementById('geminiKeyInput').value.trim();
+      const lic = document.getElementById('licenseKeyInput').value.trim();
+      
+      state.apiKey = key;
+      localStorage.setItem('docuchat_api_key', key);
+      localStorage.setItem('docuchat_pro_key', lic);
+
+      state.isPro = lic.toUpperCase().startsWith('PRO-');
+      updateLicenseUI();
+      closeModal('settingsModal');
+    }
+
+    function openModal(id) {
+      document.getElementById(id).classList.remove('hidden');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    // Drag-and-Drop / File Upload
+    function setupDropZone() {
+      const dropZone = document.getElementById('dropZone');
+      const fileInput = document.getElementById('fileInput');
+
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-indigo-500', 'bg-indigo-50/50'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/50'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/50');
+        if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+      });
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) handleFiles(e.target.files);
+      });
+    }
+
+    async function handleFiles(files) {
+      if (!state.isPro && state.documents.length >= 1) {
+        alert('Free tier allows 1 active document at a time. Upgrade to Pro for multi-doc synthesis.');
+        return;
+      }
+
+      for (const file of Array.from(files)) {
+        if (file.type !== 'application/pdf') continue;
+        await parseAndStorePDF(file);
+      }
+    }
+
+    // PDF Extraction & Text Chunking
+    async function parseAndStorePDF(file) {
+      const status = document.getElementById('parseStatus');
+      const statusText = document.getElementById('parseStatusText');
+      status.classList.remove('hidden');
+      statusText.textContent = `Extracting ${file.name}...`;
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const totalPages = pdf.numPages;
+        const chunks = [];
+
+        for (let i = 1; i <= totalPages; i++) {
+          statusText.textContent = `Parsing page ${i} of ${totalPages}...`;
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const pageText = content.items.map(item => item.str).join(' ');
+
+          // Chunk page text into sliding segments (~700 chars each with minor overlap)
+          const textChunks = chunkText(pageText, 750, 100);
+          textChunks.forEach(chunk => {
+            if (chunk.trim().length > 20) {
+              chunks.push({ text: chunk, page: i });
+            }
+          });
+        }
+
+        const docId = 'doc_' + Date.now();
+        state.documents.push({
+          id: docId,
+          name: file.name,
+          pages: totalPages,
+          chunks: chunks
+        });
+
+        // Set active doc if it's the first one
+        if (!state.selectedDocId) state.selectedDocId = docId;
+
+        renderDocumentList();
+        updateScopeDropdown();
+      } catch (err) {
+        console.error(err);
+        alert('Failed to parse PDF: ' + err.message);
+      } finally {
+        status.classList.add('hidden');
+      }
+    }
+
+    function chunkText(text, size, overlap) {
+      const chunks = [];
+      let i = 0;
+      while (i < text.length) {
+        chunks.push(text.slice(i, i + size));
+        i += size - overlap;
+      }
+      return chunks;
+    }
+
+    function renderDocumentList() {
+      const container = document.getElementById('docListContainer');
+      container.innerHTML = '';
+
+      state.documents.forEach(doc => {
+        const item = document.createElement('div');
+        const isSelected = state.selectedDocId === doc.id;
+        item.className = `p-2.5 rounded-lg border text-xs flex items-center justify-between transition cursor-pointer ${
+          isSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-900' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+        }`;
+        item.onclick = () => {
+          state.selectedDocId = doc.id;
+          renderDocumentList();
+          updateScopeDropdown();
+        };
+
+        item.innerHTML = `
+          <div class="flex items-center gap-2 overflow-hidden">
+            <i data-lucide="file" class="w-4 h-4 shrink-0 text-slate-400"></i>
+            <span class="truncate font-medium">${doc.name}</span>
+          </div>
+          <span class="text-[10px] text-slate-400 shrink-0 ml-2">${doc.pages}p</span>
+        `;
+        container.appendChild(item);
+      });
+      lucide.createIcons();
+    }
+
+    function updateScopeDropdown() {
+      const select = document.getElementById('scopeSelect');
+      const activeInfo = document.getElementById('activeDocInfo');
+      select.innerHTML = '';
+
+      if (state.isPro) {
+        const optAll = document.createElement('option');
+        optAll.value = 'all';
+        optAll.textContent = 'All Documents Combined';
+        optAll.selected = state.selectedDocId === null;
+        select.appendChild(optAll);
+      }
+
+      state.documents.forEach(doc => {
+        const opt = document.createElement('option');
+        opt.value = doc.id;
+        opt.textContent = doc.name;
+        opt.selected = state.selectedDocId === doc.id;
+        select.appendChild(opt);
+      });
+
+      if (state.selectedDocId === null) {
+        activeInfo.textContent = `Querying: All Documents (${state.documents.length} loaded)`;
+      } else {
+        const current = state.documents.find(d => d.id === state.selectedDocId);
+        activeInfo.textContent = current ? `Targeting: ${current.name}` : 'No document selected';
+      }
+    }
+
+    function handleScopeChange() {
+      const val = document.getElementById('scopeSelect').value;
+      state.selectedDocId = val === 'all' ? null : val;
+      renderDocumentList();
+      updateScopeDropdown();
+    }
+
+    // Keyword relevance retriever (In-memory BM25-lite)
+    function retrieveRelevantChunks(query, k = 6) {
+      const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+      let pool = [];
+
+      if (state.selectedDocId) {
+        const doc = state.documents.find(d => d.id === state.selectedDocId);
+        if (doc) pool = doc.chunks.map(c => ({ ...c, docName: doc.name }));
+      } else {
+        state.documents.forEach(doc => {
+          doc.chunks.forEach(c => pool.push({ ...c, docName: doc.name }));
+        });
+      }
+
+      // Score chunks via term frequency
+      const scored = pool.map(chunk => {
+        const lower = chunk.text.toLowerCase();
+        let score = 0;
+        terms.forEach(term => {
+          if (lower.includes(term)) score += 1;
+        });
+        return { ...chunk, score };
+      });
+
+      return scored.sort((a, b) => b.score - a.score).slice(0, k);
+    }
+
+    // Chat Execution
+    async function handleChatSubmit(e) {
+      e.preventDefault();
+      const input = document.getElementById('queryInput');
+      const query = input.value.trim();
+      if (!query) return;
+
+      if (!state.apiKey) {
+        openModal('settingsModal');
+        return;
+      }
+
+      if (state.documents.length === 0) {
+        alert('Please attach a PDF before issuing queries.');
+        return;
+      }
+
+      // Append user prompt to UI
+      appendMessage('user', query);
+      input.value = '';
+
+      // Prepare Context & Loading State
+      const relevantChunks = retrieveRelevantChunks(query, 5);
+      const botMsgId = appendMessage('assistant', '', true);
+
+      try {
+        const contextPayload = relevantChunks
+          .map((c, i) => `[Source ${i+1}: ${c.docName}, p.${c.page}]\n${c.text}`)
+          .join('\n\n');
+
+        const systemPrompt = `You are DocuChat, a grounded and helpful document analysis tool. Answer the user prompt accurately relying exclusively on the provided Document Context below. Always append source citations at the end in format: [DocName, p.X]. If the answer is not present in the excerpts, candidly state you cannot find it in the provided documents.\n\nDOCUMENT CONTEXT:\n${contextPayload}`;
+
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              { role: 'user', parts: [{ text: `${systemPrompt}\n\nUSER QUESTION:\n${query}` }] }
+            ],
+            generationConfig: { temperature: 0.2 }
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error?.message || 'Error communicating with Google API');
+        }
+
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated.';
+        
+        updateBotMessage(botMsgId, text);
+      } catch (err) {
+        updateBotMessage(botMsgId, `**Error:** ${err.message}`);
+      }
+    }
+
+    function appendMessage(role, content, isLoading = false) {
+      const history = document.getElementById('chatHistory');
+      const id = 'msg_' + Date.now();
+      const div = document.createElement('div');
+      div.id = id;
+
+      if (role === 'user') {
+        div.className = 'flex justify-end';
+        div.innerHTML = `
+          <div class="max-w-[80%] bg-indigo-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-none text-sm leading-relaxed shadow-sm">
+            ${escapeHtml(content)}
+          </div>
+        `;
+      } else {
+        div.className = 'flex justify-start';
+        div.innerHTML = `
+          <div class="max-w-[85%] bg-white border border-slate-200 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-none text-sm leading-relaxed shadow-sm">
+            <div class="message-content">
+              ${isLoading ? '<div class="flex items-center gap-2 text-slate-400"><i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Synthesizing...</div>' : formatResponse(content)}
+            </div>
+            ${!isLoading ? getActionButtonsHTML(content) : ''}
+          </div>
+        `;
+      }
+
+      history.appendChild(div);
+      history.scrollTop = history.scrollHeight;
+      lucide.createIcons();
+      return id;
+    }
+
+    function updateBotMessage(elementId, content) {
+      const container = document.getElementById(elementId);
+      if (!container) return;
+      const contentDiv = container.querySelector('.message-content');
+      contentDiv.innerHTML = formatResponse(content);
+      
+      const actionsDiv = document.createElement('div');
+      actionsDiv.innerHTML = getActionButtonsHTML(content);
+      container.querySelector('div').appendChild(actionsDiv);
+
+      state.chatHistory.push({ role: 'assistant', content });
+      lucide.createIcons();
+      document.getElementById('chatHistory').scrollTop = document.getElementById('chatHistory').scrollHeight;
+    }
+
+    function getActionButtonsHTML(text) {
+      return `
+        <div class="mt-3 pt-2 border-t border-slate-100 flex items-center justify-end gap-2 text-[11px] text-slate-400">
+          <button onclick="speakAnswer(this)" data-text="${encodeURIComponent(text)}" class="hover:text-indigo-600 flex items-center gap-1">
+            <i data-lucide="volume-2" class="w-3.5 h-3.5"></i> Audio Summary
+          </button>
+        </div>
+      `;
+    }
+
+    // Web Speech Synthesis (Pro Feature)
+    function speakAnswer(btn) {
+      if (!state.isPro) {
+        openModal('upgradeModal');
+        return;
+      }
+      const raw = decodeURIComponent(btn.getAttribute('data-text'));
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(raw.slice(0, 300)); // Play top concise snippet
+        utterance.rate = 1.0;
+        window.speechSynthesis.speak(utterance);
+      } else {
+        alert('Browser does not support SpeechSynthesis.');
+      }
+    }
+
+    // Markdown Exporter (Pro Feature)
+    function exportChatMarkdown() {
+      if (!state.isPro) {
+        openModal('upgradeModal');
+        return;
+      }
+      if (state.chatHistory.length === 0) {
+        alert('No conversation records to export.');
+        return;
+      }
+
+      let markdown = `# DocuChat Session Export\nGenerated: ${new Date().toISOString()}\n\n`;
+      state.chatHistory.forEach(msg => {
+        markdown += `### ${msg.role.toUpperCase()}\n${msg.content}\n\n---\n\n`;
+      });
+
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `docuchat-export-${Date.now()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Helpers
+    function formatResponse(text) {
+      return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br>');
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+  </script>
+</body>
+</html>
